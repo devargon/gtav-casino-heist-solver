@@ -1,8 +1,47 @@
 import os
+import re
 
 import numpy as np
 import cv2
 from PIL import Image, ImageGrab, ImageDraw  # Windows/macOS; for Linux use mss
+from pathlib import Path
+import sys
+import pytesseract
+from rapidfuzz import fuzz
+
+if getattr(sys, 'frozen', False):
+    base_path = Path(sys._MEIPASS)
+else:
+    base_path = Path(__file__).resolve().parent
+
+tesseract_path = base_path / "Tesseract-OCR" / "tesseract.exe"
+
+print(f"Tesseract location identified as {tesseract_path}")
+
+pytesseract.pytesseract.tesseract_cmd = tesseract_path
+
+def detect_eligibility_to_scan_fingerprint() -> bool:
+    def normalize(text: str) -> str:
+        text = text.lower()
+        text = text.replace("\n", " ")
+        text = re.sub(r"[^\w\s]", "", text)  # remove punctuation
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    img = take_screenshot()
+    img = img.crop((19, 15, 19+453, 15+81))
+    img.show
+    detected_text = pytesseract.image_to_string(img, lang="eng")
+    expected_text = "Press to select 4 elements that make up the fingerprint."
+    score = fuzz.ratio(normalize(expected_text), normalize(detected_text))
+    return score > 85
+
+def take_screenshot():
+    screenshot_filename = "sample_screenshot.jpg"
+    img = Image.open(screenshot_filename)
+    img = img.resize((1920, 1080))
+    return img
+
 
 def tile_feat(bgr):
     g = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
@@ -41,12 +80,11 @@ def preprocess_game_fingerprint(bgr: np.ndarray) -> np.ndarray:
 
     return binary
 
-def grab_fingerprint_from_game(screenshot_file):
+def grab_fingerprint_from_game():
     # x,y,w,h in screen coordinates
     # img = ImageGrab.grab(bbox=(x, y, x+w, y+h))  # returns PIL Image (RGB)
     print("tst")
-    img = Image.open(screenshot_file)
-    img = img.resize((1920, 1080))
+    img = take_screenshot()
 
     # crop dimensions, top left: 979, 154, selection dimensions: 338, 507
     img = img.crop((979, 154, 979+338, 154+507))
@@ -55,9 +93,8 @@ def grab_fingerprint_from_game(screenshot_file):
     result = preprocess_game_fingerprint(bgr)
     return bgr
 
-def grab_options_from_game(screenshot_file):
-    img = Image.open(screenshot_file)
-    img = img.resize((1920, 1080))
+def grab_options_from_game():
+    img = take_screenshot()
 
     data = []
 
@@ -129,13 +166,15 @@ def match_fp_option_tile(live_bgr, ref_bgr):
 
     return max(float(s1), float(s2))
 
+def main():
+    if not detect_eligibility_to_scan_fingerprint():
+        return
 
-if __name__ == "__main__":
-    screenshot_filename = "sample_screenshot.jpg"
+
     print("Detecting fingerprint to solve in game.")
-    live = grab_fingerprint_from_game(screenshot_filename)
+    live = grab_fingerprint_from_game()
     print("Detecting available fingerprint tile options in game.")
-    options_data = grab_options_from_game(screenshot_filename)
+    options_data = grab_options_from_game()
     # [ { bbox: (x1,y1,x2,y2), np: np.array }, ... ]
     best_name = None
     best_score = -1
@@ -191,7 +230,7 @@ if __name__ == "__main__":
             final_option_tiles.append(best_match_to_answer)
             options_data.remove(best_match_to_answer)
 
-    testimg = Image.open(screenshot_filename).resize((1920, 1080))
+    testimg = take_screenshot()
     for final_option in final_option_tiles:
         draw = ImageDraw.Draw(testimg)
         x1, y1, x2, y2 = final_option["bbox"]
@@ -200,3 +239,5 @@ if __name__ == "__main__":
 
 
 
+if __name__ == "__main__":
+    main()
